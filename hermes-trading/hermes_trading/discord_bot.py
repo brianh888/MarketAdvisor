@@ -555,6 +555,8 @@ class HermesBot(discord.Client):
 
 
 def main() -> None:
+    from . import single_instance
+    single_instance.acquire("discord_bot", "The Discord bot")   # one bot = one card per item
     load_env()
     db.init_db()
     _ensure_posts_table()

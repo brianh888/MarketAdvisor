@@ -58,6 +58,19 @@ python -m venv .venv
 .venv/Scripts/python -m uvicorn dashboard.app:app --port 8000
 ```
 
+Or double-click `start.bat`, which starts everything and opens the dashboard.
+
+**Only one copy of each part ever runs.** The worker, dashboard and Discord bot each hold
+a lock (`state/locks/`) for as long as they run. A second copy exits straight away with
+"already running". So `start.bat` is safe to double-click again at any time: it starts
+only the parts that aren't running and opens the dashboard. Duplicates matter because
+two workers would trade the same paper book independently.
+
+The OS frees the locks automatically when a process ends, including on a crash, a closed
+window or a PC restart. Check a part with:
+`.venv/Scripts/python -m hermes_trading.single_instance running worker`
+(exit code 0 = running).
+
 Open http://localhost:8000. When the strategy signals, a pending trade appears — click
 **Approve** to open a paper position (or **Reject**). Approved buys fill at the **live price
 at approval time**, so a fresh position opens at ~0 unrealised (not a stale gap).

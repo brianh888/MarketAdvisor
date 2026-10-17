@@ -42,6 +42,8 @@ STATIC_DIR = (STATE_DIR.parent / "dashboard" / "static")
 
 @app.on_event("startup")
 def _startup() -> None:
+    from hermes_trading import single_instance
+    single_instance.acquire("dashboard", "The dashboard")
     ensure_dirs()
     db.init_db()
 

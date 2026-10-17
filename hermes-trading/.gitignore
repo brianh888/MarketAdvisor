@@ -8,6 +8,7 @@ state/trading.db-shm
 state/history/
 state/hypotheses.jsonl
 state/decisions.jsonl
+state/locks/
 
 # personal live config (tuned by your approvals) — the repo ships *.example.yaml templates
 config/goal.yaml
