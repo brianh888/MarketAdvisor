@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from hermes_trading import approval, brief, db, drift, memory, paper_broker, review, settings, spy_compare, wheel
+from hermes_trading import approval, brief, db, drift, memory, paper_broker, review, settings, spy_compare, wheel, wheel_screen
 from hermes_trading import execution as ex
 from hermes_trading.config import load_goal, load_strategy
 from hermes_trading.loop import RISK_CHECK_SECONDS, TICK_SECONDS
@@ -145,7 +145,9 @@ def state() -> JSONResponse:
         ).fetchone()["c"]
         since_last = max(0, closed_total - int(db.get_meta(conn, "last_reflection_count", "0") or "0"))
 
-        return JSONResponse(
+        # clean(): a single NaN/inf from market data must not fail the whole response
+        # (that blanks the dashboard) — non-finite numbers are sent as null instead.
+        return JSONResponse(wheel_screen.clean(
             {
                 "heartbeat": hb,
                 "goal": goal,
@@ -205,7 +207,7 @@ def state() -> JSONResponse:
                     "risk_check_seconds": RISK_CHECK_SECONDS,
                 },
             }
-        )
+        ))
     finally:
         conn.close()
 

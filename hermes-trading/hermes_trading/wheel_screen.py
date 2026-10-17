@@ -22,6 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import math
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -80,7 +81,7 @@ def explain(c: dict[str, Any]) -> str:
     """One plain-English line on why a company passed."""
     nd = c["net_debt_to_fcf"]
     debt = "more cash than debt" if nd < 0 else f"net debt {nd:.1f}x its annual FCF"
-    div = c.get("dividend_yield")
+    div = _num(c.get("dividend_yield"))
     div_s = f", pays a {div:.1f}% dividend" if div else ""
     return (f"{c['name']} turns {c['fcf_margin']:.0%} of revenue into free cash "
             f"(${c['fcf'] / 1e9:.1f}B over 12 months, positive {c['fcf_years']} years running) — "
@@ -119,8 +120,8 @@ def run(cfg: dict[str, Any]) -> dict[str, Any]:
             "fcf_years": len(ann), "vs_sma200": float(last[t] / sma[t] - 1) if pd.notna(sma.get(t)) else 0.0,
             "return_6m": float(r6[t]) if pd.notna(r6.get(t)) else 0.0,
             # yfinance reports dividendYield already in PERCENT (6.5 = 6.5%)
-            "dividend_yield": float(f["dividend_yield"]) if f.get("dividend_yield") else None,
-            "beta": f.get("beta"),
+            "dividend_yield": _num(f.get("dividend_yield")),
+            "beta": _num(f.get("beta")),
         }
         healthy = (fcf > 0 and len(ann) >= sc["min_positive_fcf_years"] and all(x > 0 for x in ann)
                    and sc["min_fcf_margin"] <= c["fcf_margin"] <= sc["max_fcf_margin"]
@@ -150,15 +151,35 @@ def run(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _num(x: Any) -> float | None:
+    """A finite float, or None. Yahoo fields come back as None, NaN or inf when missing."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def clean(obj: Any) -> Any:
+    """Replace NaN/inf anywhere in a nested structure with None (they aren't valid JSON)."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: clean(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [clean(v) for v in obj]
+    return obj
+
+
 def store(conn: sqlite3.Connection, result: dict[str, Any]) -> None:
     conn.execute("INSERT OR REPLACE INTO opt_screen(date, ts, json) VALUES(?,?,?)",
-                 (result["date"], result["ts"], json.dumps(result, default=float)))
+                 (result["date"], result["ts"], json.dumps(clean(result), default=float)))
     conn.commit()
 
 
 def latest(conn: sqlite3.Connection) -> dict[str, Any] | None:
     row = conn.execute("SELECT json FROM opt_screen ORDER BY ts DESC LIMIT 1").fetchone()
-    return json.loads(row["json"]) if row else None
+    return clean(json.loads(row["json"])) if row else None
 
 
 def due(conn: sqlite3.Connection, cfg: dict[str, Any]) -> bool:
