@@ -57,26 +57,56 @@ ok(reflect.build_change(strat, "trend_sma_days", 180)["new_value"] == 180, "tren
 
 # ---- 3. dashboard refuses other websites and odd Host headers -------------------------------
 print("3. dashboard only answers itself")
+
+
+def call(app, method, path, headers=None):
+    """Send one HTTP request straight into the ASGI app and return the status code.
+
+    Deliberately NOT starlette's TestClient: newer versions of it need an extra package (httpx2)
+    just to run, which made this test crash instead of testing. This needs nothing extra."""
+    import asyncio
+    hdrs = {"host": "localhost:8000"}
+    hdrs.update({k.lower(): v for k, v in (headers or {}).items()})
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method,
+             "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",
+             "headers": [(k.encode(), v.encode()) for k, v in hdrs.items()],
+             "client": ("127.0.0.1", 50000), "server": ("localhost", 8000)}
+    seen = {}
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            seen["status"] = message["status"]
+
+    async def run():
+        try:
+            await app(scope, receive, send)
+        except Exception:  # noqa: BLE001 - a crash inside a handler still sent a 500 first
+            pass
+
+    asyncio.run(run())
+    return seen.get("status")
+
+
 try:
-    from fastapi.testclient import TestClient
     from hermes_trading import db
     db.DB_FILE = Path(tempfile.mkdtemp()) / "guard_test.db"   # throwaway: never touch state/trading.db
     db.init_db()
     from dashboard.app import app
-    cl = TestClient(app, base_url="http://localhost:8000", raise_server_exceptions=False)  # no startup events
-    ok(cl.post("/api/brief-now", headers={"Origin": "https://evil.example"}).status_code == 403,
+    ok(call(app, "POST", "/api/brief-now", {"Origin": "https://evil.example"}) == 403,
        "POST from another website is blocked")
-    ok(cl.post("/api/brief-now", headers={"Origin": "null"}).status_code == 403, "POST with Origin 'null' is blocked")
-    ok(cl.get("/", headers={"Host": "evil.example"}).status_code == 403, "unexpected Host header is blocked")
-    ok(cl.get("/", headers={"Origin": "https://evil.example"}).status_code == 200,
-       "plain page load still works")
+    ok(call(app, "POST", "/api/brief-now", {"Origin": "null"}) == 403, "POST with Origin 'null' is blocked")
+    ok(call(app, "GET", "/", {"Host": "evil.example"}) == 403, "unexpected Host header is blocked")
+    ok(call(app, "GET", "/", {"Origin": "https://evil.example"}) == 200, "plain page load still works")
     # same-origin clicks must NOT be blocked by the guard (any other status than 403 is fine)
-    r = cl.post("/api/trades/999999/reject", headers={"Origin": "http://localhost:8000"})
-    ok(r.status_code != 403, f"a click from the dashboard itself passes the guard (got {r.status_code})")
-    r = cl.post("/api/trades/999999/reject", headers={"Origin": "http://127.0.0.1:8000", "Host": "127.0.0.1:8000"})
-    ok(r.status_code != 403, "127.0.0.1 is also accepted")
+    r = call(app, "POST", "/api/trades/999999/reject", {"Origin": "http://localhost:8000"})
+    ok(r is not None and r != 403, f"a click from the dashboard itself passes the guard (got {r})")
+    r = call(app, "POST", "/api/trades/999999/reject", {"Origin": "http://127.0.0.1:8000", "Host": "127.0.0.1:8000"})
+    ok(r is not None and r != 403, f"127.0.0.1 is also accepted (got {r})")
 except ImportError as exc:
-    print(f"  SKIP dashboard guard check ({exc}); pip install httpx to enable")
+    print(f"  SKIP dashboard guard check ({exc}); the dashboard's own packages are missing")
 
 # ---- 4. claude_brain reads the model name after .env is loaded ------------------------------
 print("4. claude_brain model setting")
